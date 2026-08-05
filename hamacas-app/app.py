@@ -26,8 +26,6 @@ METHOD_COLORS = {
 editing_id = {"value": None}
 quantity_state = {"value": 1}
 
-dark = ui.dark_mode(True)
-
 
 def format_beds(text):
     """Turns '4, 12' into 'H4, H12'. Leaves an already-prefixed 'H4' as is."""
@@ -167,6 +165,8 @@ def export_excel():
 def main_page():
     global type_input, beds_input, method_input
     global save_btn, cancel_btn, edit_notice, quantity_label
+
+    dark = ui.dark_mode(True)
 
     with ui.row().classes("w-full items-center justify-between"):
         ui.label("Sunbed Sales").classes("text-2xl")

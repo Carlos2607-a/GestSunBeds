@@ -18,6 +18,34 @@ PRECIOS = {"Primera linea": 50.0, "Resto": 45.0}
 METODOS = ["Datafono", "Efectivo", "A cuenta", "Habitacion"]
 
 editando_id = {"value": None}
+cantidad_state = {"value": 1}
+
+
+def format_hamacas(texto):
+    """Convierte '4, 12' en 'H4, H12'. Si ya trae la H, la respeta."""
+    partes = [p.strip() for p in texto.split(",") if p.strip()]
+    formateadas = []
+    for p in partes:
+        if p.upper().startswith("H"):
+            formateadas.append(p.upper())
+        else:
+            formateadas.append(f"H{p}")
+    return ", ".join(formateadas)
+
+
+def actualizar_cantidad_label():
+    cantidad_label.text = str(cantidad_state["value"])
+
+
+def sumar_cantidad():
+    cantidad_state["value"] += 1
+    actualizar_cantidad_label()
+
+
+def restar_cantidad():
+    if cantidad_state["value"] > 1:
+        cantidad_state["value"] -= 1
+        actualizar_cantidad_label()
 
 
 @ui.refreshable
@@ -58,7 +86,8 @@ def lista_ui():
 def cargar_edicion(venta):
     editando_id["value"] = venta["id"]
     tipo_input.value = venta["tipo"]
-    cantidad_input.value = venta["cantidad"]
+    cantidad_state["value"] = venta["cantidad"]
+    actualizar_cantidad_label()
     hamacas_input.value = venta["hamacas"] or ""
     metodo_input.value = venta["metodo_pago"]
     registrar_btn.text = "Guardar cambios"
@@ -70,7 +99,8 @@ def cargar_edicion(venta):
 def cancelar_edicion():
     editando_id["value"] = None
     tipo_input.value = "Primera linea"
-    cantidad_input.value = 1
+    cantidad_state["value"] = 1
+    actualizar_cantidad_label()
     hamacas_input.value = ""
     metodo_input.value = METODOS[0]
     registrar_btn.text = "Registrar venta"
@@ -88,8 +118,8 @@ def borrar(venta_id):
 
 def guardar():
     tipo = tipo_input.value
-    cantidad = int(cantidad_input.value or 1)
-    hamacas = hamacas_input.value or ""
+    cantidad = cantidad_state["value"]
+    hamacas = format_hamacas(hamacas_input.value or "")
     metodo = metodo_input.value
     precio = PRECIOS[tipo]
 
@@ -126,8 +156,8 @@ def exportar():
 
 @ui.page("/")
 def main_page():
-    global tipo_input, cantidad_input, hamacas_input, metodo_input
-    global registrar_btn, cancelar_btn, aviso_edicion
+    global tipo_input, hamacas_input, metodo_input
+    global registrar_btn, cancelar_btn, aviso_edicion, cantidad_label
 
     ui.label("Ventas de hamacas").classes("text-2xl mb-2")
 
@@ -136,8 +166,14 @@ def main_page():
 
     with ui.card().classes("w-full max-w-md"):
         tipo_input = ui.radio(list(PRECIOS.keys()), value="Primera linea").props("inline")
-        cantidad_input = ui.number("Cantidad", value=1, min=1, step=1).classes("w-full")
-        hamacas_input = ui.input("Numero de hamaca(s)", placeholder="Ej: H4, H12").classes("w-full")
+
+        with ui.row().classes("items-center gap-4 mt-2"):
+            ui.label("Cantidad")
+            ui.button(icon="remove", on_click=restar_cantidad).props("flat round dense")
+            cantidad_label = ui.label("1").classes("text-lg w-6 text-center")
+            ui.button(icon="add", on_click=sumar_cantidad).props("flat round dense")
+
+        hamacas_input = ui.input("Numero de hamaca(s)", placeholder="Ej: 4, 12").classes("w-full mt-2")
         metodo_input = ui.radio(METODOS, value=METODOS[0]).props("inline")
 
         with ui.row().classes("mt-2"):

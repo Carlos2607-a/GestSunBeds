@@ -481,8 +481,8 @@ def try_login(username_input, password_input, error_label):
 def login_page():
     with ui.column().classes("w-full items-center justify-center gap-4").style("min-height: 90vh;"):
         ui.icon("beach_access", size="64px").classes("text-blue-400")
-        ui.label("Sunbed & Big Bed Sales").classes("text-3xl font-medium")
-        ui.label("Beach club sales tracker").classes("text-gray-500 mb-4")
+        ui.label("Beach House").classes("text-3xl font-medium")
+        ui.label("Sales tracker").classes("text-gray-500 mb-4")
 
         with ui.card().classes("w-full max-w-sm"):
             username_input = ui.input("Username").classes("w-full")

@@ -2,18 +2,31 @@
 database.py
 Maneja toda la interaccion con SQLite: crear la tabla, registrar ventas,
 editarlas, borrarlas y calcular el resumen del dia.
+Todas las horas se guardan en hora de Madrid (Europe/Madrid), sin importar
+en que zona horaria este configurado el servidor.
 """
 
 import sqlite3
 from datetime import datetime
 from contextlib import contextmanager
+from zoneinfo import ZoneInfo
 
 DB_PATH = "ventas.db"
+TZ = ZoneInfo("Europe/Madrid")
+
+
+def ahora():
+    """Fecha y hora actual, siempre en hora de Madrid."""
+    return datetime.now(TZ)
+
+
+def hoy():
+    """Fecha de hoy (YYYY-MM-DD) en hora de Madrid."""
+    return ahora().strftime("%Y-%m-%d")
 
 
 @contextmanager
 def get_connection():
-    """Abre y cierra la conexion automaticamente en cada operacion."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     try:
@@ -24,7 +37,6 @@ def get_connection():
 
 
 def init_db():
-    """Crea la tabla si no existe. Se llama una vez al arrancar la app."""
     with get_connection() as conn:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS ventas (
@@ -42,16 +54,15 @@ def init_db():
 
 
 def crear_venta(tipo, precio_unitario, cantidad, hamacas, metodo_pago):
-    """Inserta una nueva venta. Calcula el importe automaticamente."""
-    ahora = datetime.now()
+    momento = ahora()
     importe = precio_unitario * cantidad
     with get_connection() as conn:
         conn.execute("""
             INSERT INTO ventas (fecha, hora, tipo, precio_unitario, cantidad, hamacas, metodo_pago, importe)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            ahora.strftime("%Y-%m-%d"),
-            ahora.strftime("%H:%M"),
+            momento.strftime("%Y-%m-%d"),
+            momento.strftime("%H:%M"),
             tipo,
             precio_unitario,
             cantidad,
@@ -62,7 +73,6 @@ def crear_venta(tipo, precio_unitario, cantidad, hamacas, metodo_pago):
 
 
 def actualizar_venta(venta_id, tipo, precio_unitario, cantidad, hamacas, metodo_pago):
-    """Sobrescribe una venta existente (mismo id), recalculando el importe."""
     importe = precio_unitario * cantidad
     with get_connection() as conn:
         conn.execute("""
@@ -78,9 +88,8 @@ def eliminar_venta(venta_id):
 
 
 def obtener_ventas_dia(fecha=None):
-    """Devuelve todas las ventas de una fecha (por defecto, hoy), mas recientes primero."""
     if fecha is None:
-        fecha = datetime.now().strftime("%Y-%m-%d")
+        fecha = hoy()
     with get_connection() as conn:
         rows = conn.execute(
             "SELECT * FROM ventas WHERE fecha = ? ORDER BY id DESC", (fecha,)
@@ -89,15 +98,54 @@ def obtener_ventas_dia(fecha=None):
 
 
 def resumen_dia(fecha=None):
-    """Total de hamacas vendidas, total en euros, y desglose por metodo de pago."""
+    """
+    Resumen completo del dia:
+    - total_hamacas, total_importe (como antes)
+    - desglose: importe por metodo de pago (como antes, para no romper nada)
+    - por_tipo: cantidad e importe por tipo (Primera linea / Resto)
+    - por_metodo: cantidad e importe por metodo de pago
+    - por_habitacion: cantidad e importe por habitacion (solo ventas "Room charge - X")
+    """
     ventas = obtener_ventas_dia(fecha)
     total_hamacas = sum(v["cantidad"] for v in ventas)
     total_importe = sum(v["importe"] for v in ventas)
+
     desglose = {}
+    por_tipo = {}
+    por_metodo = {}
+    por_habitacion = {}
+
     for v in ventas:
+        # desglose simple (compatibilidad con lo que ya habia)
         desglose[v["metodo_pago"]] = desglose.get(v["metodo_pago"], 0) + v["importe"]
+
+        # por tipo (Primera linea / Resto)
+        tipo = v["tipo"]
+        if tipo not in por_tipo:
+            por_tipo[tipo] = {"cantidad": 0, "importe": 0.0}
+        por_tipo[tipo]["cantidad"] += v["cantidad"]
+        por_tipo[tipo]["importe"] += v["importe"]
+
+        # por metodo de pago (con cantidad, no solo importe)
+        metodo = v["metodo_pago"]
+        if metodo not in por_metodo:
+            por_metodo[metodo] = {"cantidad": 0, "importe": 0.0}
+        por_metodo[metodo]["cantidad"] += v["cantidad"]
+        por_metodo[metodo]["importe"] += v["importe"]
+
+        # por habitacion (solo si el metodo empieza por "Room charge - ")
+        if metodo.startswith("Room charge - "):
+            habitacion = metodo.split(" - ", 1)[1]
+            if habitacion not in por_habitacion:
+                por_habitacion[habitacion] = {"cantidad": 0, "importe": 0.0}
+            por_habitacion[habitacion]["cantidad"] += v["cantidad"]
+            por_habitacion[habitacion]["importe"] += v["importe"]
+
     return {
         "total_hamacas": total_hamacas,
         "total_importe": total_importe,
         "desglose": desglose,
+        "por_tipo": por_tipo,
+        "por_metodo": por_metodo,
+        "por_habitacion": por_habitacion,
     }

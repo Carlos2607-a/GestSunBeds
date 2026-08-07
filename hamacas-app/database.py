@@ -149,3 +149,18 @@ def resumen_dia(fecha=None):
         "por_metodo": por_metodo,
         "por_habitacion": por_habitacion,
     }
+
+
+def resumen_rango(fecha_inicio, fecha_fin):
+    """Total de hamacas e importe por cada dia dentro de un rango (para comparar)."""
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT fecha,
+                   SUM(cantidad) AS total_hamacas,
+                   SUM(importe) AS total_importe
+            FROM ventas
+            WHERE fecha BETWEEN ? AND ?
+            GROUP BY fecha
+            ORDER BY fecha
+        """, (fecha_inicio, fecha_fin)).fetchall()
+        return [dict(row) for row in rows]

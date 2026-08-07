@@ -1,9 +1,10 @@
 """
 database.py
 Maneja toda la interaccion con SQLite: crear la tabla, registrar ventas,
-editarlas, borrarlas y calcular el resumen del dia.
-Todas las horas se guardan en hora de Madrid (Europe/Madrid), sin importar
-en que zona horaria este configurado el servidor.
+editarlas, borrarlas y calcular resumenes.
+Todas las horas se guardan en hora de Madrid (Europe/Madrid).
+Cada venta tiene un "producto": 'Sunbed' o 'Big Bed', para poder
+reportarlos por separado.
 """
 
 import sqlite3
@@ -16,12 +17,10 @@ TZ = ZoneInfo("Europe/Madrid")
 
 
 def ahora():
-    """Fecha y hora actual, siempre en hora de Madrid."""
     return datetime.now(TZ)
 
 
 def hoy():
-    """Fecha de hoy (YYYY-MM-DD) en hora de Madrid."""
     return ahora().strftime("%Y-%m-%d")
 
 
@@ -43,6 +42,7 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 fecha TEXT NOT NULL,
                 hora TEXT NOT NULL,
+                producto TEXT NOT NULL DEFAULT 'Sunbed',
                 tipo TEXT NOT NULL,
                 precio_unitario REAL NOT NULL,
                 cantidad INTEGER NOT NULL,
@@ -51,18 +51,24 @@ def init_db():
                 importe REAL NOT NULL
             )
         """)
+        # Migration: if the table already existed without "producto"
+        # (from before Big Beds existed), add it and default old rows to Sunbed.
+        cols = [row["name"] for row in conn.execute("PRAGMA table_info(ventas)").fetchall()]
+        if "producto" not in cols:
+            conn.execute("ALTER TABLE ventas ADD COLUMN producto TEXT NOT NULL DEFAULT 'Sunbed'")
 
 
-def crear_venta(tipo, precio_unitario, cantidad, hamacas, metodo_pago):
+def crear_venta(producto, tipo, precio_unitario, cantidad, hamacas, metodo_pago):
     momento = ahora()
     importe = precio_unitario * cantidad
     with get_connection() as conn:
         conn.execute("""
-            INSERT INTO ventas (fecha, hora, tipo, precio_unitario, cantidad, hamacas, metodo_pago, importe)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO ventas (fecha, hora, producto, tipo, precio_unitario, cantidad, hamacas, metodo_pago, importe)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             momento.strftime("%Y-%m-%d"),
             momento.strftime("%H:%M"),
+            producto,
             tipo,
             precio_unitario,
             cantidad,
@@ -72,14 +78,14 @@ def crear_venta(tipo, precio_unitario, cantidad, hamacas, metodo_pago):
         ))
 
 
-def actualizar_venta(venta_id, tipo, precio_unitario, cantidad, hamacas, metodo_pago):
+def actualizar_venta(venta_id, producto, tipo, precio_unitario, cantidad, hamacas, metodo_pago):
     importe = precio_unitario * cantidad
     with get_connection() as conn:
         conn.execute("""
             UPDATE ventas
-            SET tipo = ?, precio_unitario = ?, cantidad = ?, hamacas = ?, metodo_pago = ?, importe = ?
+            SET producto = ?, tipo = ?, precio_unitario = ?, cantidad = ?, hamacas = ?, metodo_pago = ?, importe = ?
             WHERE id = ?
-        """, (tipo, precio_unitario, cantidad, hamacas, metodo_pago, importe, venta_id))
+        """, (producto, tipo, precio_unitario, cantidad, hamacas, metodo_pago, importe, venta_id))
 
 
 def eliminar_venta(venta_id):
@@ -87,26 +93,29 @@ def eliminar_venta(venta_id):
         conn.execute("DELETE FROM ventas WHERE id = ?", (venta_id,))
 
 
-def obtener_ventas_dia(fecha=None):
+def obtener_ventas_dia(fecha=None, producto=None):
+    """Todas las ventas de una fecha. Si se pasa 'producto', filtra solo ese ('Sunbed' o 'Big Bed')."""
     if fecha is None:
         fecha = hoy()
     with get_connection() as conn:
-        rows = conn.execute(
-            "SELECT * FROM ventas WHERE fecha = ? ORDER BY id DESC", (fecha,)
-        ).fetchall()
+        if producto:
+            rows = conn.execute(
+                "SELECT * FROM ventas WHERE fecha = ? AND producto = ? ORDER BY id DESC",
+                (fecha, producto),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM ventas WHERE fecha = ? ORDER BY id DESC", (fecha,)
+            ).fetchall()
         return [dict(row) for row in rows]
 
 
-def resumen_dia(fecha=None):
+def resumen_dia(fecha=None, producto=None):
     """
-    Resumen completo del dia:
-    - total_hamacas, total_importe (como antes)
-    - desglose: importe por metodo de pago (como antes, para no romper nada)
-    - por_tipo: cantidad e importe por tipo (Primera linea / Resto)
-    - por_metodo: cantidad e importe por metodo de pago
-    - por_habitacion: cantidad e importe por habitacion (solo ventas "Room charge - X")
+    Resumen de un dia, opcionalmente filtrado a un solo producto
+    ('Sunbed' o 'Big Bed'). Si producto es None, junta ambos.
     """
-    ventas = obtener_ventas_dia(fecha)
+    ventas = obtener_ventas_dia(fecha, producto)
     total_hamacas = sum(v["cantidad"] for v in ventas)
     total_importe = sum(v["importe"] for v in ventas)
 
@@ -116,24 +125,20 @@ def resumen_dia(fecha=None):
     por_habitacion = {}
 
     for v in ventas:
-        # desglose simple (compatibilidad con lo que ya habia)
         desglose[v["metodo_pago"]] = desglose.get(v["metodo_pago"], 0) + v["importe"]
 
-        # por tipo (Primera linea / Resto)
         tipo = v["tipo"]
         if tipo not in por_tipo:
             por_tipo[tipo] = {"cantidad": 0, "importe": 0.0}
         por_tipo[tipo]["cantidad"] += v["cantidad"]
         por_tipo[tipo]["importe"] += v["importe"]
 
-        # por metodo de pago (con cantidad, no solo importe)
         metodo = v["metodo_pago"]
         if metodo not in por_metodo:
             por_metodo[metodo] = {"cantidad": 0, "importe": 0.0}
         por_metodo[metodo]["cantidad"] += v["cantidad"]
         por_metodo[metodo]["importe"] += v["importe"]
 
-        # por habitacion (solo si el metodo empieza por "Room charge - ")
         if metodo.startswith("Room charge - "):
             habitacion = metodo.split(" - ", 1)[1]
             if habitacion not in por_habitacion:
@@ -151,16 +156,23 @@ def resumen_dia(fecha=None):
     }
 
 
-def resumen_rango(fecha_inicio, fecha_fin):
-    """Total de hamacas e importe por cada dia dentro de un rango (para comparar)."""
+def resumen_rango(fecha_inicio, fecha_fin, producto=None):
+    """Total por dia dentro de un rango, opcionalmente filtrado por producto."""
     with get_connection() as conn:
-        rows = conn.execute("""
-            SELECT fecha,
-                   SUM(cantidad) AS total_hamacas,
-                   SUM(importe) AS total_importe
-            FROM ventas
-            WHERE fecha BETWEEN ? AND ?
-            GROUP BY fecha
-            ORDER BY fecha
-        """, (fecha_inicio, fecha_fin)).fetchall()
+        if producto:
+            rows = conn.execute("""
+                SELECT fecha, SUM(cantidad) AS total_hamacas, SUM(importe) AS total_importe
+                FROM ventas
+                WHERE fecha BETWEEN ? AND ? AND producto = ?
+                GROUP BY fecha
+                ORDER BY fecha
+            """, (fecha_inicio, fecha_fin, producto)).fetchall()
+        else:
+            rows = conn.execute("""
+                SELECT fecha, SUM(cantidad) AS total_hamacas, SUM(importe) AS total_importe
+                FROM ventas
+                WHERE fecha BETWEEN ? AND ?
+                GROUP BY fecha
+                ORDER BY fecha
+            """, (fecha_inicio, fecha_fin)).fetchall()
         return [dict(row) for row in rows]
